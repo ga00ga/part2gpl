@@ -11,6 +11,7 @@ public class CommandParser
     private Graphics graphics;
     private Pen currentPen;
     private Dictionary<string, float> variables;
+    private Dictionary<string, List<string>> subroutines;
     public PointF currentPosition;
     private bool fillEnabled = false;
 
@@ -32,6 +33,7 @@ public class CommandParser
         this.currentPosition = new PointF(0, 0);
 
         variables = new Dictionary<string, float>();
+        subroutines = new Dictionary<string, List<string>>();
     }
 
     public void ExecuteProgram(string program)
@@ -41,6 +43,21 @@ public class CommandParser
         {
             var line = lines[i].Trim();
             var parts = line.Split(' ');
+
+            if (parts[0].ToLower() == "def")
+            {
+                string subroutineName = parts[1];
+                List<string> subroutineCommands = new List<string>();
+                i++; // Move to next line
+                while (!lines[i].Trim().StartsWith("enddef", StringComparison.OrdinalIgnoreCase))
+                {
+                    subroutineCommands.Add(lines[i]);
+                    i++;
+                }
+                subroutines[subroutineName] = subroutineCommands;
+                continue;
+            }
+
             switch (parts[0].ToLower())
             {
                 case "moveto":
@@ -215,6 +232,17 @@ public class CommandParser
             }
         }
         throw new ArgumentException("Invalid format for condition");
+    }
+
+    public void ExecuteSubroutine(string name)
+    {
+        if (!subroutines.ContainsKey(name))
+            throw new ArgumentException($"Subroutine '{name}' not found.");
+
+        foreach (var command in subroutines[name])
+        {
+            ExecuteCommand(command);
+        }
     }
 
     private float ParseFloat(string input)
