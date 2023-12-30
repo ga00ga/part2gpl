@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -163,7 +163,60 @@ public class CommandParser
         }
         throw new ArgumentException($"Variable '{varName}' not found.");
     }
-    
+    private int FindEndLoopIndex(string[] lines, int startIndex)
+    {
+        int loopCount = 0;
+        for (int i = startIndex; i < lines.Length; i++)
+        {
+            if (lines[i].Trim().StartsWith("loop", StringComparison.OrdinalIgnoreCase))
+                loopCount++;
+            else if (lines[i].Trim().StartsWith("endloop", StringComparison.OrdinalIgnoreCase))
+            {
+                loopCount--;
+                if (loopCount == 0) return i;
+            }
+        }
+        throw new InvalidOperationException("No matching endloop found for loop at line " + startIndex);
+    }
+
+    private int FindEndIfIndex(string[] lines, int startIndex)
+    {
+        int ifCount = 0;
+        for (int i = startIndex; i < lines.Length; i++)
+        {
+            if (lines[i].Trim().StartsWith("if", StringComparison.OrdinalIgnoreCase))
+                ifCount++;
+            else if (lines[i].Trim().StartsWith("endif", StringComparison.OrdinalIgnoreCase))
+            {
+                ifCount--;
+                if (ifCount == 0) return i;
+            }
+        }
+        throw new InvalidOperationException("No matching endif found for if at line " + startIndex);
+    }
+
+    private bool EvaluateCondition(string condition)
+    {
+        string[] parts = condition.Split(' ');
+        if (parts.Length == 3)
+        {
+            float left = ParseFloat(parts[0]);
+            float right = ParseFloat(parts[2]);
+
+            switch (parts[1])
+            {
+                case "==": return left == right;
+                case "!=": return left != right;
+                case "<": return left < right;
+                case ">": return left > right;
+                case "<=": return left <= right;
+                case ">=": return left >= right;
+                default: throw new ArgumentException("Invalid operator in condition");
+            }
+        }
+        throw new ArgumentException("Invalid format for condition");
+    }
+
     private float ParseFloat(string input)
     {
         if (variables.ContainsKey(input))
