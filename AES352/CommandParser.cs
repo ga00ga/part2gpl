@@ -12,6 +12,7 @@ public class CommandParser
     private Pen currentPen;
     private Dictionary<string, float> variables;
     private Dictionary<string, List<string>> subroutines;
+    private Dictionary<string, Action<string[]>> methods;
     public PointF currentPosition;
     private bool fillEnabled = false;
 
@@ -34,6 +35,7 @@ public class CommandParser
 
         variables = new Dictionary<string, float>();
         subroutines = new Dictionary<string, List<string>>();
+        methods = new Dictionary<string, Action<string[]>>();
     }
 
     public void ExecuteProgram(string program)
@@ -42,19 +44,35 @@ public class CommandParser
         for (int i = 0; i < lines.Length; i++)
         {
             var line = lines[i].Trim();
-            var parts = line.Split(' ');
+            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
+                continue; // Ignore empty lines and comments
 
-            if (parts[0].ToLower() == "def")
+            var parts = line.Split(' ');
+            if (parts[0].ToLower() == "method")
             {
-                string subroutineName = parts[1];
-                List<string> subroutineCommands = new List<string>();
-                i++; // Move to next line
-                while (!lines[i].Trim().StartsWith("enddef", StringComparison.OrdinalIgnoreCase))
+                string methodName = parts[1];
+                List<string> methodCommands = new List<string>();
+                i++; // Move to the next line to start reading the method body
+                while (!lines[i].Trim().StartsWith("endmethod", StringComparison.OrdinalIgnoreCase))
                 {
-                    subroutineCommands.Add(lines[i]);
+                    methodCommands.Add(lines[i]);
                     i++;
                 }
-                subroutines[subroutineName] = subroutineCommands;
+                // Store the method body in a lambda that takes parameters
+                methods[methodName] = (parameters) =>
+                {
+                    foreach (var cmd in methodCommands)
+                    {
+                        ExecuteCommand(ReplaceParameters(cmd, parameters));
+                    }
+                };
+                continue;
+            }
+            else if (methods.ContainsKey(parts[0]))
+            {
+                // Extracting parameters and removing parentheses
+                var parameters = parts[1].Trim('(', ')').Split(',');
+                methods[parts[0]](parameters);
                 continue;
             }
 
@@ -244,6 +262,20 @@ public class CommandParser
             ExecuteCommand(command);
         }
     }
+
+    private string ReplaceParameters(string command, string[] parameters)
+    {
+        foreach (var param in parameters)
+        {
+            var parts = param.Split('=');
+            if (parts.Length == 2)
+            {
+                command = command.Replace(parts[0].Trim(), parts[1].Trim());
+            }
+        }
+        return command;
+    }
+
 
     private float ParseFloat(string input)
     {
