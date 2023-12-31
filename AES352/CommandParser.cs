@@ -30,13 +30,16 @@ public class CommandParser
         Bitmap bmp = new Bitmap(displayArea.Width, displayArea.Height);
         displayArea.Image = bmp;
         this.graphics = Graphics.FromImage(bmp);
-        this.currentPen = new Pen(Color.Black);
-        this.currentPosition = new PointF(0, 0);
+
+        // Initialize currentPen with default color and opacity
+        currentPen = new Pen(Color.Black, 1f); // Default opacity: 255 (fully opaque)
+        currentPosition = new PointF(0, 0);
 
         variables = new Dictionary<string, float>();
         subroutines = new Dictionary<string, List<string>>();
         methods = new Dictionary<string, Action<string[]>>();
     }
+
 
     public void ExecuteProgram(string program)
     {
@@ -96,8 +99,8 @@ public class CommandParser
                 case "triangle":
                     DrawTriangle(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]), float.Parse(parts[4]), float.Parse(parts[5]), float.Parse(parts[6]));
                     break;
-                case "color":
-                    SetColor(Color.FromName(parts[1]));
+                case "setcolor":
+                    SetColor(Color.FromName(parts[1]), int.Parse(parts[2]));
                     break;
                 case "reset":
                     ResetPenPosition();
@@ -110,6 +113,19 @@ public class CommandParser
                     break;
                 case "usevar":
                     UseVariable(parts[1]);
+                    break;
+                case "bgcolor":
+                    if (parts.Length >= 2)
+                    {
+                        string colorName = parts[1];
+                        ChangeBackgroundColor(colorName);
+                        displayArea.Invalidate(); // Refresh the canvas
+                    }
+                    else
+                    {
+                        // Handle error: Invalid or missing color name parameter
+                        Console.WriteLine("Invalid 'bgcolor' command. Usage: bgcolor [colorName]");
+                    }
                     break;
                 case "loop":
                     int iterations = (int)ParseFloat(parts[1]);
@@ -136,6 +152,20 @@ public class CommandParser
                     }
                     i = endIfIndex;
                     break;
+
+                case "drawgrid":
+                    if (parts.Length >= 2 && int.TryParse(parts[1], out int spacing))
+                    {
+                        DrawGridlines(spacing);
+                    }
+                    else
+                    {
+                        // Handle error: Invalid or missing spacing parameter
+                        Console.WriteLine("Invalid 'drawgrid' command. Usage: drawgrid [spacing]");
+                    }
+                    break;
+
+
                 default:
                     throw new ArgumentException("Unknown command");
             }
@@ -170,8 +200,8 @@ public class CommandParser
             case "triangle":
                 DrawTriangle(ParseFloat(lines[1]), ParseFloat(lines[2]), ParseFloat(lines[3]), ParseFloat(lines[4]), ParseFloat(lines[5]), ParseFloat(lines[6]));
                 break;
-            case "color":
-                SetColor(Color.FromName(lines[1]));
+            case "setcolor":
+                SetColor(Color.FromName(lines[1]), int.Parse(lines[2]));
                 break;
             case "reset":
                 ResetPenPosition();
@@ -189,6 +219,20 @@ public class CommandParser
     {
         variables[varName] = value;
     }
+
+    public void ChangeBackgroundColor(string colorName)
+    {
+        if (Enum.TryParse(colorName, true, out KnownColor knownColor))
+        {
+            Color newColor = Color.FromKnownColor(knownColor);
+            displayArea.BackColor = newColor; // Change the background color of the drawing area
+        }
+        else
+        {
+            throw new ArgumentException("Invalid color name.");
+        }
+    }
+
 
     private float UseVariable(string varName)
     {
@@ -361,7 +405,7 @@ public class CommandParser
 
     private void Clear()
     {
-        graphics.Clear(Color.White); 
+        graphics.Clear(Color.White);
         currentPosition = new PointF(0, 0);
     }
 
@@ -390,10 +434,39 @@ public class CommandParser
             graphics.DrawPolygon(currentPen, points);
     }
 
-    private void SetColor(Color color)
+    private void DrawGridlines(int spacing)
     {
-        currentPen.Color = color;
+        using (var gridBitmap = new Bitmap(displayArea.Width, displayArea.Height))
+        using (var gridGraphics = Graphics.FromImage(gridBitmap))
+        {
+            gridGraphics.Clear(Color.White); // Clear the grid with the background color
+
+            using (var gridPen = new Pen(Color.Gray))
+            {
+                for (int x = 0; x < displayArea.Width; x += spacing)
+                {
+                    gridGraphics.DrawLine(gridPen, x, 0, x, displayArea.Height);
+                }
+                for (int y = 0; y < displayArea.Height; y += spacing)
+                {
+                    gridGraphics.DrawLine(gridPen, 0, y, displayArea.Width, y);
+                }
+            }
+
+            // Draw the existing image (shapes) on top of the grid
+            graphics.DrawImage(gridBitmap, new Point(0, 0));
+        }
     }
+
+
+
+
+    private void SetColor(Color color, int opacity)
+    {
+        // Update the current pen color with the specified opacity
+        currentPen.Color = Color.FromArgb(opacity, color);
+    }
+
 
     private void ResetPenPosition()
     {
