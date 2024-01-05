@@ -20,6 +20,7 @@ public class CommandParser
     public PointF CurrentPosition => currentPosition;
     public Pen CurrentPen => currentPen;
     public bool FillEnabled => fillEnabled;
+    private readonly object graphicsLock = new object();
 
     public CommandParser(TextBox codeTextBox, PictureBox displayArea)
     {
@@ -43,143 +44,146 @@ public class CommandParser
 
     public void ExecuteProgram(string program)
     {
-        var lines = codeTextBox.Text.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
-        for (int i = 0; i < lines.Length; i++)
+        lock (graphicsLock)
         {
-            var line = lines[i].Trim();
-            if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
-                continue; // Ignore empty lines and comments
-
-            var parts = line.Split(' ');
-            if (parts[0].ToLower() == "method")
+            var lines = codeTextBox.Text.Split(new[] { Environment.NewLine }, StringSplitOptions.RemoveEmptyEntries);
+            for (int i = 0; i < lines.Length; i++)
             {
-                string methodName = parts[1];
-                List<string> methodCommands = new List<string>();
-                i++; // Move to the next line to start reading the method body
-                while (!lines[i].Trim().StartsWith("endmethod", StringComparison.OrdinalIgnoreCase))
+                var line = lines[i].Trim();
+                if (string.IsNullOrWhiteSpace(line) || line.StartsWith("#"))
+                    continue; // Ignore empty lines and comments
+
+                var parts = line.Split(' ');
+                if (parts[0].ToLower() == "method")
                 {
-                    methodCommands.Add(lines[i]);
-                    i++;
+                    string methodName = parts[1];
+                    List<string> methodCommands = new List<string>();
+                    i++; // Move to the next line to start reading the method body
+                    while (!lines[i].Trim().StartsWith("endmethod", StringComparison.OrdinalIgnoreCase))
+                    {
+                        methodCommands.Add(lines[i]);
+                        i++;
+                    }
+                    // Store the method body in a lambda that takes parameters
+                    methods[methodName] = (parameters) =>
+                    {
+                        foreach (var cmd in methodCommands)
+                        {
+                            ExecuteCommand(ReplaceParameters(cmd, parameters));
+                        }
+                    };
+                    continue;
                 }
-                // Store the method body in a lambda that takes parameters
-                methods[methodName] = (parameters) =>
+                else if (methods.ContainsKey(parts[0]))
                 {
-                    foreach (var cmd in methodCommands)
-                    {
-                        ExecuteCommand(ReplaceParameters(cmd, parameters));
-                    }
-                };
-                continue;
-            }
-            else if (methods.ContainsKey(parts[0]))
-            {
-                // Extracting parameters and removing parentheses
-                var parameters = parts[1].Trim('(', ')').Split(',');
-                methods[parts[0]](parameters);
-                continue;
-            }
+                    // Extracting parameters and removing parentheses
+                    var parameters = parts[1].Trim('(', ')').Split(',');
+                    methods[parts[0]](parameters);
+                    continue;
+                }
 
-            switch (parts[0].ToLower())
-            {
-                case "moveto":
-                    MoveTo(float.Parse(parts[1]), float.Parse(parts[2]));
-                    break;
-                case "drawto":
-                    DrawTo(float.Parse(parts[1]), float.Parse(parts[2]));
-                    break;
-                case "clear":
-                    Clear();
-                    break;
-                case "rectangle":
-                    DrawRectangle(float.Parse(parts[1]), float.Parse(parts[2]));
-                    break;
-                case "circle":
-                    DrawCircle(float.Parse(parts[1]));
-                    break;
-                case "triangle":
-                    DrawTriangle(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]), float.Parse(parts[4]), float.Parse(parts[5]), float.Parse(parts[6]));
-                    break;
-                case "setcolor":
-                    SetColor(Color.FromName(parts[1]), int.Parse(parts[2]));
-                    break;
-                case "reset":
-                    ResetPenPosition();
-                    break;
-                case "fill":
-                    ToggleFill(parts[1]);
-                    break;
-                case "set":
-                    SetVariable(parts[1], ParseFloat(parts[2]));
-                    break;
-                case "usevar":
-                    UseVariable(parts[1]);
-                    break;
-                case "bgcolor":
-                    if (parts.Length >= 2)
-                    {
-                        string colorName = parts[1];
-                        ChangeBackgroundColor(colorName);
-                        displayArea.Invalidate(); // Refresh the canvas
-                    }
-                    else
-                    {
-                        // Handle error: Invalid or missing color name parameter
-                        Console.WriteLine("Invalid 'bgcolor' command. Usage: bgcolor [colorName]");
-                    }
-                    break;
-                case "loop":
-                    int iterations = (int)ParseFloat(parts[1]);
-                    int endLoopIndex = FindEndLoopIndex(lines, i);
-                    for (int j = 0; j < iterations; j++)
-                    {
-                        for (int k = i + 1; k < endLoopIndex; k++)
+                switch (parts[0].ToLower())
+                {
+                    case "moveto":
+                        MoveTo(float.Parse(parts[1]), float.Parse(parts[2]));
+                        break;
+                    case "drawto":
+                        DrawTo(float.Parse(parts[1]), float.Parse(parts[2]));
+                        break;
+                    case "clear":
+                        Clear();
+                        break;
+                    case "rectangle":
+                        DrawRectangle(float.Parse(parts[1]), float.Parse(parts[2]));
+                        break;
+                    case "circle":
+                        DrawCircle(float.Parse(parts[1]));
+                        break;
+                    case "triangle":
+                        DrawTriangle(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]), float.Parse(parts[4]), float.Parse(parts[5]), float.Parse(parts[6]));
+                        break;
+                    case "setcolor":
+                        SetColor(Color.FromName(parts[1]), int.Parse(parts[2]));
+                        break;
+                    case "reset":
+                        ResetPenPosition();
+                        break;
+                    case "fill":
+                        ToggleFill(parts[1]);
+                        break;
+                    case "set":
+                        SetVariable(parts[1], ParseFloat(parts[2]));
+                        break;
+                    case "usevar":
+                        UseVariable(parts[1]);
+                        break;
+                    case "bgcolor":
+                        if (parts.Length >= 2)
                         {
-                            ExecuteCommand(lines[k]);
+                            string colorName = parts[1];
+                            ChangeBackgroundColor(colorName);
+                            displayArea.Invalidate(); // Refresh the canvas
                         }
-                    }
-                    i = endLoopIndex;
-                    break;
-
-                case "if":
-                    bool condition = EvaluateCondition(parts[1]);
-                    int endIfIndex = FindEndIfIndex(lines, i);
-                    if (condition)
-                    {
-                        for (int k = i + 1; k < endIfIndex; k++)
+                        else
                         {
-                            ExecuteCommand(lines[k]);
+                            // Handle error: Invalid or missing color name parameter
+                            Console.WriteLine("Invalid 'bgcolor' command. Usage: bgcolor [colorName]");
                         }
-                    }
-                    i = endIfIndex;
-                    break;
+                        break;
+                    case "loop":
+                        int iterations = (int)ParseFloat(parts[1]);
+                        int endLoopIndex = FindEndLoopIndex(lines, i);
+                        for (int j = 0; j < iterations; j++)
+                        {
+                            for (int k = i + 1; k < endLoopIndex; k++)
+                            {
+                                ExecuteCommand(lines[k]);
+                            }
+                        }
+                        i = endLoopIndex;
+                        break;
 
-                case "drawgrid":
-                    if (parts.Length >= 2 && int.TryParse(parts[1], out int spacing))
-                    {
-                        DrawGridlines(spacing);
-                    }
-                    else
-                    {
-                        // Handle error: Invalid or missing spacing parameter
-                        Console.WriteLine("Invalid 'drawgrid' command. Usage: drawgrid [spacing]");
-                    }
-                    break;
+                    case "if":
+                        bool condition = EvaluateCondition(parts[1]);
+                        int endIfIndex = FindEndIfIndex(lines, i);
+                        if (condition)
+                        {
+                            for (int k = i + 1; k < endIfIndex; k++)
+                            {
+                                ExecuteCommand(lines[k]);
+                            }
+                        }
+                        i = endIfIndex;
+                        break;
+
+                    case "drawgrid":
+                        if (parts.Length >= 2 && int.TryParse(parts[1], out int spacing))
+                        {
+                            DrawGridlines(spacing);
+                        }
+                        else
+                        {
+                            // Handle error: Invalid or missing spacing parameter
+                            Console.WriteLine("Invalid 'drawgrid' command. Usage: drawgrid [spacing]");
+                        }
+                        break;
 
 
-                default:
-                    throw new ArgumentException("Unknown command");
+                    default:
+                        throw new ArgumentException("Unknown command");
+                }
             }
+
+            // After executing a command that draws something, refresh the PictureBox
+            displayArea.Invalidate();
         }
-
-        // After executing a command that draws something, refresh the PictureBox
-        displayArea.Invalidate();
     }
 
 
 
-    public void ExecuteCommand(string command)
+    public void ExecuteCommand(string commandText)
     {
-        string[] lines = command.Split(' ');
+        string[] lines = commandText.Split(' ');
         switch (lines[0].ToLower())
         {
             case "moveto":
@@ -247,12 +251,18 @@ public class CommandParser
         int loopCount = 0;
         for (int i = startIndex; i < lines.Length; i++)
         {
-            if (lines[i].Trim().StartsWith("loop", StringComparison.OrdinalIgnoreCase))
+            var trimmedLine = lines[i].Trim().ToLower();
+            if (trimmedLine.StartsWith("loop"))
+            {
                 loopCount++;
-            else if (lines[i].Trim().StartsWith("endloop", StringComparison.OrdinalIgnoreCase))
+            }
+            else if (trimmedLine.StartsWith("endloop"))
             {
                 loopCount--;
-                if (loopCount == 0) return i;
+                if (loopCount < 0)
+                {
+                    return i; // Found the matching "endloop"
+                }
             }
         }
         throw new InvalidOperationException("No matching endloop found for loop at line " + startIndex);
@@ -263,16 +273,24 @@ public class CommandParser
         int ifCount = 0;
         for (int i = startIndex; i < lines.Length; i++)
         {
-            if (lines[i].Trim().StartsWith("if", StringComparison.OrdinalIgnoreCase))
+            var trimmedLine = lines[i].Trim().ToLower();
+            if (trimmedLine.StartsWith("if"))
+            {
                 ifCount++;
-            else if (lines[i].Trim().StartsWith("endif", StringComparison.OrdinalIgnoreCase))
+            }
+            else if (trimmedLine.StartsWith("endif"))
             {
                 ifCount--;
-                if (ifCount == 0) return i;
+                if (ifCount < 0)
+                {
+                    return i; // Found the matching "endif"
+                }
             }
         }
         throw new InvalidOperationException("No matching endif found for if at line " + startIndex);
     }
+
+
 
     private bool EvaluateCondition(string condition)
     {
