@@ -2,7 +2,7 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace part2
+namespace AES352
 {
     public partial class Form1 : Form
     {
@@ -18,11 +18,21 @@ namespace part2
             colorDialog = new ColorDialog();
             colorDialog.AnyColor = true; // Allow custom color selection
             colorDialog.FullOpen = true; // Show the full dialog
+            commandTextBox.KeyUp += new KeyEventHandler(commandTextBox_KeyUp);
         }
 
         private void Form1_Load(object sender, EventArgs e)
         {
             // Initialization that occurs when the form loads can be placed here.
+        }
+
+        private void RunProgramsConcurrently(string program1, string program2)
+        {
+            var thread1 = new Thread(() => parser.ExecuteProgram(program1));
+            var thread2 = new Thread(() => parser.ExecuteProgram(program2));
+
+            thread1.Start();
+            thread2.Start();
         }
 
         private void RunButton_Click(object sender, EventArgs e)
@@ -93,10 +103,12 @@ namespace part2
         {
             if (e.KeyCode == Keys.Enter)
             {
-                var commandText = ((TextBox)sender).Text;
+                var commandText = commandTextBox.Text;
                 try
                 {
                     parser.ExecuteCommand(commandText);
+                    displayArea.Invalidate(); // Refresh the canvas after executing the command
+                    MessageBox.Show("Command executed successfully.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
                 }
                 catch (Exception ex)
                 {
@@ -104,7 +116,7 @@ namespace part2
                 }
                 finally
                 {
-                    ((TextBox)sender).Clear();
+                    ((TextBox)sender).Clear(); // Clear the commandTextBox after processing the command
                 }
             }
         }
