@@ -1,5 +1,4 @@
 using System;
-using System.Data;
 using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
@@ -11,16 +10,18 @@ public class CommandParser
     private PictureBox displayArea;
     private Graphics graphics;
     private Pen currentPen;
-    private Dictionary<string, float> variables = new Dictionary<string, float>();
-    private Dictionary<string, List<string>> subroutines;
     public PointF currentPosition;
+    private Bitmap currentDrawing;
     private bool fillEnabled = false;
-    private Color currentTextColor = Color.Black;
 
     // Make properties public so they can be accessed by unit tests
     public PointF CurrentPosition => currentPosition;
     public Pen CurrentPen => currentPen;
     public bool FillEnabled => fillEnabled;
+    private float currentLineThickness = 1f;
+    private float currentRotationAngle = 0f;
+    private Color currentTextColor = Color.Black;
+    private Dictionary<string, float> variables = new Dictionary<string, float>();
     private bool isInsideIfBlock = false;
     private bool isInsideLoop = false;
     private List<string> loopBlock = new List<string>();
@@ -29,6 +30,8 @@ public class CommandParser
     private string currentMethodName = "";
     private int currentLineIndex = 0;
     private readonly object graphicsLock = new object();
+
+
 
 
     private bool CheckIfCondition(string condition)
@@ -87,6 +90,7 @@ public class CommandParser
         }
     }
 
+
     private float GetOperandValue(string operand)
     {
         // Check if the operand is a valid variable name
@@ -107,6 +111,15 @@ public class CommandParser
     }
 
 
+    public class SyntaxErrorException : Exception
+    {
+        public SyntaxErrorException(string message) : base(message)
+        {
+        }
+    }
+
+
+
     public CommandParser(TextBox codeTextBox, PictureBox displayArea)
     {
         this.codeTextBox = codeTextBox;
@@ -116,13 +129,9 @@ public class CommandParser
         Bitmap bmp = new Bitmap(displayArea.Width, displayArea.Height);
         displayArea.Image = bmp;
         this.graphics = Graphics.FromImage(bmp);
-
-        // Initialize currentPen with default color and opacity
-        currentPen = new Pen(Color.Black, 1f); // Default opacity: 255 (fully opaque)
-        currentPosition = new PointF(0, 0);
-
+        this.currentPen = new Pen(Color.Black);
+        this.currentPosition = new PointF(0, 0);
     }
-
 
     public void ExecuteProgram(string program)
     {
@@ -175,28 +184,44 @@ public class CommandParser
                         DrawRectangle(float.Parse(parts[1]), float.Parse(parts[2]));
                         break;
                     case "circle":
-                            float radius;
-                            // Check if the argument is a variable, if not try parsing it as a float
-                            if (!variables.TryGetValue(parts[1], out radius) && !float.TryParse(parts[1], out radius))
-                            {
-                                throw new ArgumentException($"Unable to parse '{parts[1]}' as a float or variable.");
-                            }
-                            DrawCircle(radius);
+                        float radius;
+                        // Check if the argument is a variable, if not try parsing it as a float
+                        if (!variables.TryGetValue(parts[1], out radius) && !float.TryParse(parts[1], out radius))
+                        {
+                            throw new ArgumentException($"Unable to parse '{parts[1]}' as a float or variable.");
+                        }
+                        DrawCircle(radius);
                         break;
                     case "triangle":
                         DrawTriangle(float.Parse(parts[1]), float.Parse(parts[2]), float.Parse(parts[3]), float.Parse(parts[4]), float.Parse(parts[5]), float.Parse(parts[6]));
                         break;
-                    case "setcolor":
-                        SetColor(Color.FromName(parts[1]), int.Parse(parts[2]));
+                    case "color":
+                        SetColor(Color.FromName(parts[1]));
                         break;
                     case "reset":
                         ResetPenPosition();
                         break;
-                    case "text":
-                        DrawText(string.Join(" ", parts.Skip(1)));
-                        break;
                     case "fill":
                         ToggleFill(parts[1]);
+                        break;
+                    case "linewidth":
+                        SetLineThickness(float.Parse(parts[1]));
+                        break;
+                    case "rotate":
+                        Rotate(float.Parse(parts[1]));
+                        break;
+                    case "text":
+                        string textContent = string.Join(" ", parts.Skip(1));
+                        DrawText(textContent);
+                        break;
+                    case "save":
+                        SaveDrawing(string.Join(" ", parts.Skip(1)));
+                        break;
+                    case "load":
+                        LoadDrawing(string.Join(" ", parts.Skip(1)));
+                        break;
+                    case "var":
+                        DefineVariable(parts[1], float.Parse(parts[2]));
                         break;
                     case "set":
                         if (parts.Length < 3)
@@ -208,36 +233,10 @@ public class CommandParser
                         string variableExpression = string.Join(" ", parts.Skip(2));
                         SetVariable(variableName, variableExpression);
                         break;
-
-                    case "usevar":
-                        UseVariable(parts[1]);
-                        break;
-                    case "bgcolor":
-                        if (parts.Length >= 2)
-                        {
-                            string colorName = parts[1];
-                            ChangeBackgroundColor(colorName);
-                            displayArea.Invalidate(); // Refresh the canvas
-                        }
-                        else
-                        {
-                            // Handle error: Invalid or missing color name parameter
-                            Console.WriteLine("Invalid 'bgcolor' command. Usage: bgcolor [colorName]");
-                        }
-                        break;
-                    case "drawgrid":
-                        if (parts.Length >= 2 && int.TryParse(parts[1], out int spacing))
-                        {
-                            DrawGridlines(spacing);
-                        }
-                        else
-                        {
-                            // Handle error: Invalid or missing spacing parameter
-                            Console.WriteLine("Invalid 'drawgrid' command. Usage: drawgrid [spacing]");
-                        }
-                        break;
                     case "if":
-                        if (CheckIfCondition(parts[1]))
+                        // Extract the condition part of the if statement correctly
+                        string condition = line.Substring(line.IndexOf(' ') + 1);
+                        if (CheckIfCondition(condition))
                         {
                             isInsideIfBlock = true;
                         }
@@ -316,9 +315,6 @@ public class CommandParser
                             ExecuteCommand(line);
                         }
                         break;
-
-
-
                 }
             }
 
@@ -326,7 +322,6 @@ public class CommandParser
             displayArea.Invalidate();
         }
     }
-
 
 
     public void ExecuteCommand(string commandText)
@@ -352,8 +347,8 @@ public class CommandParser
             case "triangle":
                 DrawTriangle(ParseFloat(lines[1]), ParseFloat(lines[2]), ParseFloat(lines[3]), ParseFloat(lines[4]), ParseFloat(lines[5]), ParseFloat(lines[6]));
                 break;
-            case "setcolor":
-                SetColor(Color.FromName(lines[1]), int.Parse(lines[2]));
+            case "color":
+                SetColor(Color.FromName(lines[1]));
                 break;
             case "reset":
                 ResetPenPosition();
@@ -367,51 +362,105 @@ public class CommandParser
         displayArea.Invalidate();
     }
 
-    private void SetVariable(string name, string expression)
+    private float ParseFloat(string input)
     {
-        if (string.IsNullOrWhiteSpace(expression))
+        // Trim the input to remove any leading or trailing white spaces
+        input = input.Trim();
+        if (string.IsNullOrEmpty(input))
         {
-            throw new ArgumentException($"Expression for variable '{name}' is null or empty.");
+            throw new ArgumentException("Input string is null or empty.");
+        }
+        // Try parsing directly as a float
+        if (float.TryParse(input, out float result))
+        {
+            return result;
         }
 
-        float value = ParseFloat(expression);
-        variables[name] = value;
+        // Handle variables
+        if (variables.TryGetValue(input, out result))
+        {
+            return result;
+        }
+
+        // Handle expressions like "x*10"
+        string[] parts = input.Split(new char[] { '*', '/', '+', '-' }, StringSplitOptions.RemoveEmptyEntries);
+        if (parts.Length == 2)
+        {
+            float left = GetOperandValue(parts[0].Trim());
+            float right = GetOperandValue(parts[1].Trim());
+
+            // Determine the operator used in the expression
+            if (input.Contains("*"))
+            {
+                return left * right;
+            }
+            // Add additional conditions to handle '/', '+', and '-' if necessary
+        }
+
+        throw new ArgumentException($"Unable to parse '{input}' as a float or variable.");
+    }
+
+    private void SaveDrawing(string fileName)
+    {
+        if (currentDrawing != null)
+        {
+            try
+            {
+                currentDrawing.Save(fileName + ".png"); // Save as PNG image (you can choose a different format)
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Error saving the drawing: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+            }
+        }
+    }
+
+    private void LoadDrawing(string fileName)
+    {
+        try
+        {
+            var loadedImage = Image.FromFile(fileName);
+            currentDrawing = new Bitmap(loadedImage);
+            graphics = Graphics.FromImage(currentDrawing);
+            displayArea.Image = currentDrawing;
+        }
+        catch (Exception ex)
+        {
+            MessageBox.Show("Error loading the image: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+        }
     }
 
 
-    private void SkipToEndIf()
+    private float ParseOperand(string operand)
     {
-        int ifCount = 1; // Track nested if statements
-
-        while (ifCount > 0)
+        if (variables.ContainsKey(operand))
         {
-            string line = ReadNextLine();
-
-            if (line == null)
-            {
-                throw new SyntaxErrorException("Mismatched 'if' and 'endif' statements.");
-            }
-
-            // Check if the line contains "if" or "endif" to adjust the ifCount
-            if (line.ToLower().Trim() == "if")
-            {
-                ifCount++;
-            }
-            else if (line.ToLower().Trim() == "endif")
-            {
-                ifCount--;
-            }
+            return variables[operand];
+        }
+        else if (float.TryParse(operand, out float value))
+        {
+            return value;
+        }
+        else
+        {
+            throw new ArgumentException($"Invalid operand: '{operand}'");
         }
     }
 
-    private void DrawText(string textContent)
+
+    public void SaveProgram(string filePath)
     {
-        using (Font font = new Font("Arial", 12))
-        using (SolidBrush brush = new SolidBrush(currentTextColor))
-        {
-            PointF textPosition = new PointF(currentPosition.X, currentPosition.Y);
-            graphics.DrawString(textContent, font, brush, textPosition);
-        }
+        File.WriteAllText(filePath, codeTextBox.Text);
+    }
+
+    public void LoadProgram(string filePath)
+    {
+        codeTextBox.Text = File.ReadAllText(filePath);
+    }
+
+    private void SetLineThickness(float thickness)
+    {
+        currentLineThickness = thickness;
     }
 
     private bool IsMethodCall(string command)
@@ -460,6 +509,65 @@ public class CommandParser
             }
         }
     }
+    private void DrawText(string textContent)
+    {
+        using (Font font = new Font("Arial", 12))
+        using (SolidBrush brush = new SolidBrush(currentTextColor))
+        {
+            PointF textPosition = new PointF(currentPosition.X, currentPosition.Y);
+            graphics.DrawString(textContent, font, brush, textPosition);
+        }
+    }
+
+    public void DefineVariable(string name, float value)
+    {
+        if (!variables.ContainsKey(name))
+        {
+            variables[name] = value;
+        }
+        else
+        {
+            variables[name] = value; // Update the value of an existing variable
+        }
+    }
+
+    private void SetVariable(string name, string expression)
+    {
+        if (string.IsNullOrWhiteSpace(expression))
+        {
+            throw new ArgumentException($"Expression for variable '{name}' is null or empty.");
+        }
+
+        float value = ParseFloat(expression);
+        variables[name] = value;
+    }
+
+
+
+    private void SkipToEndIf()
+    {
+        int ifCount = 1; // Track nested if statements
+
+        while (ifCount > 0)
+        {
+            string line = ReadNextLine();
+
+            if (line == null)
+            {
+                throw new SyntaxErrorException("Mismatched 'if' and 'endif' statements.");
+            }
+
+            // Check if the line contains "if" or "endif" to adjust the ifCount
+            if (line.ToLower().Trim() == "if")
+            {
+                ifCount++;
+            }
+            else if (line.ToLower().Trim() == "endif")
+            {
+                ifCount--;
+            }
+        }
+    }
 
     private string ReadNextLine()
     {
@@ -476,174 +584,9 @@ public class CommandParser
             return null; // Indicates the end of the code
         }
     }
-    public void ChangeBackgroundColor(string colorName)
+    private void Rotate(float angle)
     {
-        if (Enum.TryParse(colorName, true, out KnownColor knownColor))
-        {
-            Color newColor = Color.FromKnownColor(knownColor);
-            displayArea.BackColor = newColor; // Change the background color of the drawing area
-        }
-        else
-        {
-            throw new ArgumentException("Invalid color name.");
-        }
-    }
-
-
-
-
-    private float UseVariable(string varName)
-    {
-        if (variables.TryGetValue(varName, out float value))
-        {
-            return value;
-        }
-        throw new ArgumentException($"Variable '{varName}' not found.");
-    }
-
-    private int FindEndLoopIndex(string[] lines, int startIndex)
-    {
-        int loopCount = 0;
-        for (int i = startIndex; i < lines.Length; i++)
-        {
-            var trimmedLine = lines[i].Trim().ToLower();
-            if (trimmedLine.StartsWith("loop"))
-            {
-                loopCount++;
-            }
-            else if (trimmedLine.StartsWith("endloop"))
-            {
-                loopCount--;
-                if (loopCount < 0)
-                {
-                    return i; // Found the matching "endloop"
-                }
-            }
-        }
-        throw new InvalidOperationException("No matching endloop found for loop at line " + startIndex);
-    }
-
-
-
-    private int FindEndIfIndex(string[] lines, int startIndex)
-    {
-        int ifCount = 0;
-        for (int i = startIndex; i < lines.Length; i++)
-        {
-            var trimmedLine = lines[i].Trim().ToLower();
-            if (trimmedLine.StartsWith("if"))
-            {
-                ifCount++;
-            }
-            else if (trimmedLine.StartsWith("endif"))
-            {
-                ifCount--;
-                if (ifCount < 0)
-                {
-                    return i; // Found the matching "endif"
-                }
-            }
-        }
-        throw new InvalidOperationException("No matching endif found for if at line " + startIndex);
-    }
-
-
-
-    private bool EvaluateCondition(string condition)
-    {
-        string[] parts = condition.Split(' ');
-        if (parts.Length == 3)
-        {
-            float left = ParseFloat(parts[0]);
-            float right = ParseFloat(parts[2]);
-
-            switch (parts[1])
-            {
-                case "==": return left == right;
-                case "!=": return left != right;
-                case "<": return left < right;
-                case ">": return left > right;
-                case "<=": return left <= right;
-                case ">=": return left >= right;
-                default: throw new ArgumentException("Invalid operator in condition");
-            }
-        }
-        throw new ArgumentException("Invalid format for condition");
-    }
-
-    public void ExecuteSubroutine(string name)
-    {
-        if (!subroutines.ContainsKey(name))
-            throw new ArgumentException($"Subroutine '{name}' not found.");
-
-        foreach (var command in subroutines[name])
-        {
-            ExecuteCommand(command);
-        }
-    }
-
-    private string ReplaceParameters(string command, string[] parameters)
-    {
-        foreach (var param in parameters)
-        {
-            var parts = param.Split('=');
-            if (parts.Length == 2)
-            {
-                command = command.Replace(parts[0].Trim(), parts[1].Trim());
-            }
-        }
-        return command;
-    }
-
-
-    private float ParseFloat(string input)
-    {
-        // Trim the input to remove any leading or trailing white spaces
-        input = input.Trim();
-        if (string.IsNullOrEmpty(input))
-        {
-            throw new ArgumentException("Input string is null or empty.");
-        }
-        // Try parsing directly as a float
-        if (float.TryParse(input, out float result))
-        {
-            return result;
-        }
-
-        // Handle variables
-        if (variables.TryGetValue(input, out result))
-        {
-            return result;
-        }
-
-        // Handle expressions like "x*10"
-        string[] parts = input.Split(new char[] { '*', '/', '+', '-' }, StringSplitOptions.RemoveEmptyEntries);
-        if (parts.Length == 2)
-        {
-            float left = GetOperandValue(parts[0].Trim());
-            float right = GetOperandValue(parts[1].Trim());
-
-            // Determine the operator used in the expression
-            if (input.Contains("*"))
-            {
-                return left * right;
-            }
-
-            // Add additional conditions to handle '/', '+', and '-' if necessary
-        }
-
-        throw new ArgumentException($"Unable to parse '{input}' as a float or variable.");
-    }
-
-
-    public void SaveProgram(string filePath)
-    {
-        File.WriteAllText(filePath, codeTextBox.Text);
-    }
-
-    public void LoadProgram(string filePath)
-    {
-        codeTextBox.Text = File.ReadAllText(filePath);
+        currentRotationAngle = angle;
     }
 
     public void CheckSyntax()
@@ -653,7 +596,7 @@ public class CommandParser
         {
             if (!IsValidCommand(command.Trim()))
             {
-                MessageBox.Show($"Syntax error ", "Syntax Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                MessageBox.Show($"Syntax error in command: {command}", "Syntax Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 return;
             }
         }
@@ -699,6 +642,23 @@ public class CommandParser
         currentPosition = new PointF(x, y);
     }
 
+    public void SaveImage(string filePath)
+    {
+        if (displayArea.Image != null)
+        {
+            displayArea.Image.Save(filePath);
+        }
+    }
+
+    public void LoadImage(string filePath)
+    {
+        if (File.Exists(filePath))
+        {
+            displayArea.Image = Image.FromFile(filePath);
+            graphics = Graphics.FromImage(displayArea.Image);
+        }
+    }
+
     private void DrawTo(float x, float y)
     {
         PointF newPosition = new PointF(x, y);
@@ -737,39 +697,10 @@ public class CommandParser
             graphics.DrawPolygon(currentPen, points);
     }
 
-    private void DrawGridlines(int spacing)
+    private void SetColor(Color color)
     {
-        using (var gridBitmap = new Bitmap(displayArea.Width, displayArea.Height))
-        using (var gridGraphics = Graphics.FromImage(gridBitmap))
-        {
-            gridGraphics.Clear(Color.White); // Clear the grid with the background color
-
-            using (var gridPen = new Pen(Color.Gray))
-            {
-                for (int x = 0; x < displayArea.Width; x += spacing)
-                {
-                    gridGraphics.DrawLine(gridPen, x, 0, x, displayArea.Height);
-                }
-                for (int y = 0; y < displayArea.Height; y += spacing)
-                {
-                    gridGraphics.DrawLine(gridPen, 0, y, displayArea.Width, y);
-                }
-            }
-
-            // Draw the existing image (shapes) on top of the grid
-            graphics.DrawImage(gridBitmap, new Point(0, 0));
-        }
+        currentPen.Color = color;
     }
-
-
-
-
-    private void SetColor(Color color, int opacity)
-    {
-        // Update the current pen color with the specified opacity
-        currentPen.Color = Color.FromArgb(opacity, color);
-    }
-
 
     private void ResetPenPosition()
     {
