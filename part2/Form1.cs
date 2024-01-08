@@ -2,7 +2,7 @@ using System;
 using System.Drawing;
 using System.Windows.Forms;
 
-namespace AES352
+namespace part2
 {
     public partial class Form1 : Form
     {
@@ -103,23 +103,31 @@ namespace AES352
         {
             if (e.KeyCode == Keys.Enter)
             {
-                var commandText = commandTextBox.Text;
-                try
+                string commandText = commandTextBox.Text.Trim();
+                if (string.IsNullOrEmpty(commandText))
                 {
-                    parser.ExecuteCommand(commandText);
-                    displayArea.Invalidate(); // Refresh the canvas after executing the command
-                    MessageBox.Show("Command executed successfully.", "Info", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    MessageBox.Show("Please enter a command.", "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
                 }
-                catch (Exception ex)
+                else
                 {
-                    MessageBox.Show("Error executing command: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    try
+                    {
+                        parser.ExecuteCommand(commandText);
+                        displayArea.Invalidate(); // Refresh the canvas after executing the command
+                    }
+                    catch (Exception ex)
+                    {
+                        MessageBox.Show("Error: " + ex.Message, "Error", MessageBoxButtons.OK, MessageBoxIcon.Error);
+                    }
+                    // Removed the clear command to keep the text in the box
                 }
-                finally
-                {
-                    ((TextBox)sender).Clear(); // Clear the commandTextBox after processing the command
-                }
+                // Prevent the event from bubbling up to other key event handlers
+                e.SuppressKeyPress = true;
             }
         }
+
+
+
 
         private void displayArea_Paint(object sender, PaintEventArgs e)
         {
